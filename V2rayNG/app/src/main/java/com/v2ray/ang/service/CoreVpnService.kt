@@ -32,6 +32,7 @@ class CoreVpnService : VpnService(), ServiceControl {
     private lateinit var mInterface: ParcelFileDescriptor
     private var isRunning = false
     private var tun2SocksService: Tun2SocksControl? = null
+        private var uidFilter: UidPacketFilter? = null
     private val isStartingLock = AtomicBoolean(false)
 
     override fun onCreate() {
@@ -303,10 +304,23 @@ class CoreVpnService : VpnService(), ServiceControl {
      * Starts the tun2socks process with the appropriate parameters.
      */
     private fun runTun2socks() {
+                uidFilter?.stop()
+        uidFilter = null
         if (SettingsManager.isUsingHevTun()) {
+            var tunForHev = mInterface
+            if (FirewallPrefs.withV2ray()) {
+                val filter = UidPacketFilter(applicationContext, mInterface)
+                val hevSide = filter.start()
+                if (hevSide != null) {
+                    uidFilter = filter
+                    tunForHev = hevSide
+                } else {
+                    LogUtil.w(AppConfig.TAG, "StartCore-VPN: firewall filter tidak aktif")
+                }
+            }
             tun2SocksService = TProxyService(
                 context = applicationContext,
-                vpnInterface = mInterface,
+                vpnInterface = tunForHev,
                 isRunningProvider = { isRunning },
                 restartCallback = { runTun2socks() }
             )
@@ -327,7 +341,8 @@ class CoreVpnService : VpnService(), ServiceControl {
 
         tun2SocksService?.stopTun2Socks()
         tun2SocksService = null
-
+        uidFilter?.stop()
+        uidFilter = null
         RootLanSharing.stopClientSharing(this)
 
         CoreServiceManager.stopCoreLoop()
