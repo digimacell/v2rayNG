@@ -43,6 +43,7 @@ class UidPacketFilter(
     private val cache = HashMap<Int, Verdict>()
     private var blockedUids: Set<Int> = emptySet()
     private var blockedPkgs: Set<String> = emptySet()
+    private var allowOnly = false
     private var lastRefresh = 0L
 
     /** @return ujung socketpair yang diberikan ke hev sebagai "TUN", atau null kalau gagal. */
@@ -117,8 +118,10 @@ class UidPacketFilter(
         if (now - lastRefresh < 2000) return
         lastRefresh = now
         val pkgs = FirewallPrefs.blocked()
-        if (pkgs == blockedPkgs) return
+        val mode = FirewallPrefs.allowOnly()
+        if (pkgs == blockedPkgs && mode == allowOnly) return
         blockedPkgs = pkgs
+        allowOnly = mode
         val pm = context.packageManager
         val uids = HashSet<Int>()
         for (p in pkgs) {
@@ -127,7 +130,8 @@ class UidPacketFilter(
             } catch (_: Exception) {
             }
         }
-        uids.remove(context.applicationInfo.uid) // v2rayNG sendiri jangan pernah diblokir
+        // v2rayNG sendiri jangan pernah diblokir
+        if (mode) uids.add(context.applicationInfo.uid) else uids.remove(context.applicationInfo.uid)
         blockedUids = uids
         cache.clear()
         LogUtil.i(AppConfig.TAG, "UidPacketFilter: ${uids.size} uid diblokir")
@@ -136,7 +140,7 @@ class UidPacketFilter(
     private fun isBlocked(p: ByteArray, n: Int): Boolean {
         val now = SystemClock.elapsedRealtime()
         refreshBlockList(now)
-        if (blockedUids.isEmpty() || n < 20) return false
+        if ((!allowOnly && blockedUids.isEmpty()) || n < 20) return false
 
         val ver = (p[0].toInt() ushr 4) and 0xF
         val proto: Int
@@ -174,7 +178,13 @@ class UidPacketFilter(
 
         val dport = ((p[hdr + 2].toInt() and 0xFF) shl 8) or (p[hdr + 3].toInt() and 0xFF)
         val uid = lookupUid(proto, p, srcOff, dstOff, alen, sport, dport)
-        val blocked = uid >= 0 && uid in blockedUids
+        val blocked = when {
+            uid < 0 -> false
+            // Mode "hanya yang dicentang": blokir semua aplikasi biasa (uid >= 10000)
+            // yang tidak dicentang. Layanan sistem (uid kecil, termasuk DNS) tetap lolos.
+            allowOnly -> uid >= FIRST_APP_UID && uid !in blockedUids
+            else -> uid in blockedUids
+        }
         if (cache.size > 8192) cache.entries.removeAll { it.value.expiry <= now }
         cache[key] = Verdict(blocked, now + if (uid < 0) UNKNOWN_TTL else KNOWN_TTL)
         return blocked
@@ -200,6 +210,7 @@ class UidPacketFilter(
     }
 
     companion object {
+        private const val FIRST_APP_UID = 10000
         private const val KNOWN_TTL = 120_000L
         private const val UNKNOWN_TTL = 2_000L
     }
