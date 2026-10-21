@@ -79,7 +79,7 @@ class FirewallActivity : BaseComponentActivity() {
             enabled = false
             return
         }
-        if (FirewallPrefs.blocked().isEmpty()) {
+        if (!FirewallPrefs.allowOnly() && FirewallPrefs.blocked().isEmpty()) {
             android.widget.Toast.makeText(this, R.string.firewall_pick_first, android.widget.Toast.LENGTH_LONG).show()
             return
         }
@@ -98,6 +98,7 @@ class FirewallActivity : BaseComponentActivity() {
         var loading by remember { mutableStateOf(true) }
         var blocked by remember { mutableStateOf(FirewallPrefs.blocked()) }
         var withV2ray by remember { mutableStateOf(FirewallPrefs.withV2ray()) }
+        var allowOnly by remember { mutableStateOf(FirewallPrefs.allowOnly()) }
         var showSearch by rememberSaveable { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
         val listState = rememberLazyListState()
@@ -172,6 +173,22 @@ class FirewallActivity : BaseComponentActivity() {
                             Switch(checked = withV2ray, onCheckedChange = {
                                 withV2ray = it
                                 FirewallPrefs.setWithV2ray(it)
+                            })
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                stringResource(R.string.firewall_allow_only),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Switch(checked = allowOnly, onCheckedChange = {
+                                allowOnly = it
+                                FirewallPrefs.setAllowOnly(it)
+                                // Mode mandiri: terapkan ulang. Mode v2ray: filter membaca sendiri.
+                                if (enabled) FirewallService.start(this@FirewallActivity)
                             })
                         }
                         Text(
