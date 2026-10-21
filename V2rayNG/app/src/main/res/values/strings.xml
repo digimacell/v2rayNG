@@ -168,7 +168,8 @@
         <string name="firewall_title">Internet firewall</string>
     <string name="firewall_switch">Block checked apps (standalone, without v2ray)</string>
     <string name="firewall_with_v2ray">Also block while v2ray is running</string>
-    <string name="firewall_hint">Checked = internet BLOCKED for that app. The standalone mode uses its own VPN and disconnects v2ray (Android allows only one VPN). The second option keeps blocking while v2ray runs (Android 10+, takes effect the next time v2ray is started; apps excluded from the v2ray VPN by per-app settings cannot be blocked).</string>
+<string name="firewall_allow_only">Only checked apps may go online</string>
+    <string name="firewall_hint">Normal mode: checked = internet BLOCKED for that app. "Only checked apps" mode: checked = the ONLY apps allowed online, all others are blocked. The standalone mode uses its own VPN and disconnects v2ray (Android allows only one VPN). "Also block while v2ray is running" works on Android 10+ and takes effect the next time v2ray is started; apps excluded from the v2ray VPN by per-app settings cannot be blocked.</string>
     <string name="firewall_pick_first">Check at least one app to block first</string>
     <string name="firewall_notification_text">Blocking internet for checked apps</string>
     <string name="per_app_proxy_settings">Per-app settings</string>
