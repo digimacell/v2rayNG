@@ -16,8 +16,8 @@ import java.io.FileInputStream
 /**
  * Firewall mandiri (tanpa v2ray), fitur dari BlokirNet.
  *
- * Aplikasi yang DICENTANG (diblokir) diarahkan ke VPN lokal yang paketnya
- * dibuang. Aplikasi lain tidak tersentuh. Ini bukan VPN sungguhan: tidak ada server.
+ * Mode biasa: aplikasi yang DICENTANG diarahkan ke VPN lokal yang paketnya
+ * dibuang. Mode "hanya yang dicentang": kebalikannya. Ini bukan VPN sungguhan: tidak ada server.
  *
  * Android hanya mengizinkan satu VPN aktif, jadi mode ini memutus v2ray.
  * Untuk memblokir sambil v2ray aktif, pakai opsi "Terapkan saat v2ray aktif"
@@ -53,18 +53,30 @@ class FirewallService : VpnService() {
             .addAddress("10.0.0.2", 32).addRoute("0.0.0.0", 0)
             .addAddress("fd00::2", 128).addRoute("::", 0)
 
-        // Hanya aplikasi yang diblokir yang masuk ke VPN lokal (paketnya dibuang).
-        var count = 0
-        FirewallPrefs.blocked().filter { it != packageName }.forEach {
-            try {
-                builder.addAllowedApplication(it)
-                count++
-            } catch (_: Exception) {
-                // paket sudah tidak terinstal
+        if (FirewallPrefs.allowOnly()) {
+            // Aplikasi yang dicentang (dan v2rayNG sendiri) dikeluarkan dari VPN, jadi online normal.
+            // Semua aplikasi lain, termasuk yang baru diinstal, masuk VPN lokal dan paketnya dibuang.
+            (FirewallPrefs.blocked() + packageName).forEach {
+                try {
+                    builder.addDisallowedApplication(it)
+                } catch (_: Exception) {
+                    // paket sudah tidak terinstal
+                }
             }
+        } else {
+            // Hanya aplikasi yang dicentang yang masuk ke VPN lokal (paketnya dibuang).
+            var count = 0
+            FirewallPrefs.blocked().filter { it != packageName }.forEach {
+                try {
+                    builder.addAllowedApplication(it)
+                    count++
+                } catch (_: Exception) {
+                    // paket sudah tidak terinstal
+                }
+            }
+            // Tanpa aplikasi terpilih, VPN akan menangkap SEMUA aplikasi. Jangan dinyalakan.
+            if (count == 0) return false
         }
-        // Tanpa aplikasi terpilih, VPN akan menangkap SEMUA aplikasi. Jangan dinyalakan.
-        if (count == 0) return false
 
         val fd = builder.establish() ?: return false
         tun = fd
