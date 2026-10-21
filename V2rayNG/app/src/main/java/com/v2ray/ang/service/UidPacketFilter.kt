@@ -1,217 +1,154 @@
 package com.v2ray.ang.service
 
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
-import android.net.ConnectivityManager
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.os.SystemClock
-import android.system.Os
-import android.system.OsConstants
-import android.system.StructPollfd
-import com.v2ray.ang.AppConfig
-import com.v2ray.ang.util.LogUtil
-import java.io.FileDescriptor
-import java.net.InetAddress
-import java.net.InetSocketAddress
+import com.v2ray.ang.R
+import java.io.FileInputStream
 
 /**
- * Filter paket di antara TUN Android dan hev-socks5-tunnel.
+ * Firewall mandiri (tanpa v2ray), fitur dari BlokirNet.
  *
- *   aplikasi -> TUN -> [filter ini] -> socketpair -> hev-socks5-tunnel -> Xray
+ * Mode biasa: aplikasi yang DICENTANG diarahkan ke VPN lokal yang paketnya
+ * dibuang. Mode "hanya yang dicentang": kebalikannya. Ini bukan VPN sungguhan: tidak ada server.
  *
- * Untuk setiap alur baru (TCP/UDP) pemilik alurnya dicari lewat
- * ConnectivityManager.getConnectionOwnerUid (Android 10+). Kalau pemiliknya
- * ada di daftar blokir, paketnya dibuang, jadi aplikasi itu tidak bisa online
- * walaupun v2ray aktif. Paket arah sebaliknya diteruskan apa adanya.
+ * Android hanya mengizinkan satu VPN aktif, jadi mode ini memutus v2ray.
+ * Untuk memblokir sambil v2ray aktif, pakai opsi "Terapkan saat v2ray aktif"
+ * (lihat UidPacketFilter).
  */
-class UidPacketFilter(
-    private val context: Context,
-    private val tun: ParcelFileDescriptor
-) {
-    private class Verdict(val blocked: Boolean, var expiry: Long)
+@SuppressLint("VpnServicePolicy")
+class FirewallService : VpnService() {
+    private var tun: ParcelFileDescriptor? = null
+    private var worker: Thread? = null
 
-    private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    private val a = FileDescriptor()
-    private val b = FileDescriptor()
-    private var hevSide: ParcelFileDescriptor? = null
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            setEnabled(this, false)
+            stopFirewall()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        startForegroundCompat()
+        if (!startFirewall()) {
+            setEnabled(this, false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
-    @Volatile private var running = false
-    private var up: Thread? = null
-    private var down: Thread? = null
+    private fun startFirewall(): Boolean {
+        stopFirewall()
+        val builder = Builder()
+            .setSession("Firewall")
+            .addAddress("10.0.0.2", 32).addRoute("0.0.0.0", 0)
+            .addAddress("fd00::2", 128).addRoute("::", 0)
 
-    // Hanya diakses dari thread "up".
-    private val cache = HashMap<Int, Verdict>()
-    private var blockedUids: Set<Int> = emptySet()
-    private var blockedPkgs: Set<String> = emptySet()
-    private var allowOnly = false
-    private var lastRefresh = 0L
-
-    /** @return ujung socketpair yang diberikan ke hev sebagai "TUN", atau null kalau gagal. */
-    fun start(): ParcelFileDescriptor? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
-        try {
-            Os.socketpair(OsConstants.AF_UNIX, OsConstants.SOCK_DGRAM, 0, a, b)
-            for (fd in arrayOf(a, b)) {
+        if (FirewallPrefs.allowOnly()) {
+            // Aplikasi yang dicentang (dan v2rayNG sendiri) dikeluarkan dari VPN, jadi online normal.
+            // Semua aplikasi lain, termasuk yang baru diinstal, masuk VPN lokal dan paketnya dibuang.
+            (FirewallPrefs.blocked() + packageName).forEach {
                 try {
-                    Os.setsockoptInt(fd, OsConstants.SOL_SOCKET, OsConstants.SO_SNDBUF, 1 shl 20)
-                    Os.setsockoptInt(fd, OsConstants.SOL_SOCKET, OsConstants.SO_RCVBUF, 1 shl 20)
+                    builder.addDisallowedApplication(it)
                 } catch (_: Exception) {
+                    // paket sudah tidak terinstal
                 }
             }
-            val dup = ParcelFileDescriptor.dup(b)
-            Os.close(b)
-            hevSide = dup
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "UidPacketFilter: socketpair gagal", e)
-            return null
-        }
-        running = true
-        up = Thread({ pumpUp() }, "fw-up").also { it.isDaemon = true; it.start() }
-        down = Thread({ pumpDown() }, "fw-down").also { it.isDaemon = true; it.start() }
-        return hevSide
-    }
-
-    fun stop() {
-        running = false
-        try { Os.shutdown(a, OsConstants.SHUT_RDWR) } catch (_: Exception) {}
-        try { up?.join(1500) } catch (_: Exception) {}
-        try { down?.join(1500) } catch (_: Exception) {}
-        try { Os.close(a) } catch (_: Exception) {}
-        try { hevSide?.close() } catch (_: Exception) {}
-        up = null; down = null; hevSide = null
-    }
-
-    /** TUN -> filter -> hev */
-    private fun pumpUp() {
-        val buf = ByteArray(65536)
-        val pfd = StructPollfd().apply { fd = tun.fileDescriptor; events = OsConstants.POLLIN.toShort() }
-        val pfds = arrayOf(pfd)
-        try {
-            while (running) {
-                // poll dengan timeout supaya thread ini pasti berhenti saat stop(),
-                // dan tidak "mencuri" paket dari filter berikutnya.
-                if (Os.poll(pfds, 500) <= 0) continue
-                val n = Os.read(tun.fileDescriptor, buf, 0, buf.size)
-                if (n <= 0) continue
-                if (!isBlocked(buf, n)) Os.write(a, buf, 0, n)
+        } else {
+            // Hanya aplikasi yang dicentang yang masuk ke VPN lokal (paketnya dibuang).
+            var count = 0
+            FirewallPrefs.blocked().filter { it != packageName }.forEach {
+                try {
+                    builder.addAllowedApplication(it)
+                    count++
+                } catch (_: Exception) {
+                    // paket sudah tidak terinstal
+                }
             }
-        } catch (e: Exception) {
-            if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter up: ${e.message}")
+            // Tanpa aplikasi terpilih, VPN akan menangkap SEMUA aplikasi. Jangan dinyalakan.
+            if (count == 0) return false
         }
-    }
 
-    /** hev -> TUN (tanpa filter) */
-    private fun pumpDown() {
-        val buf = ByteArray(65536)
-        try {
-            while (running) {
-                val n = Os.read(a, buf, 0, buf.size)
-                if (n <= 0) { if (!running) break else continue }
-                Os.write(tun.fileDescriptor, buf, 0, n)
-            }
-        } catch (e: Exception) {
-            if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter down: ${e.message}")
-        }
-    }
-
-    private fun refreshBlockList(now: Long) {
-        if (now - lastRefresh < 2000) return
-        lastRefresh = now
-        val pkgs = FirewallPrefs.blocked()
-        val mode = FirewallPrefs.allowOnly()
-        if (pkgs == blockedPkgs && mode == allowOnly) return
-        blockedPkgs = pkgs
-        allowOnly = mode
-        val pm = context.packageManager
-        val uids = HashSet<Int>()
-        for (p in pkgs) {
+        val fd = builder.establish() ?: return false
+        tun = fd
+        worker = Thread {
+            val input = FileInputStream(fd.fileDescriptor)
+            val buf = ByteArray(32767)
             try {
-                uids.add(pm.getApplicationInfo(p, 0).uid)
+                while (input.read(buf) >= 0) { /* buang paket */ }
             } catch (_: Exception) {
             }
-        }
-        // v2rayNG sendiri jangan pernah diblokir
-        if (mode) uids.add(context.applicationInfo.uid) else uids.remove(context.applicationInfo.uid)
-        blockedUids = uids
-        cache.clear()
-        LogUtil.i(AppConfig.TAG, "UidPacketFilter: ${uids.size} uid diblokir")
+        }.also { it.start() }
+        return true
     }
 
-    private fun isBlocked(p: ByteArray, n: Int): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        refreshBlockList(now)
-        if ((!allowOnly && blockedUids.isEmpty()) || n < 20) return false
-
-        val ver = (p[0].toInt() ushr 4) and 0xF
-        val proto: Int
-        val hdr: Int
-        val srcOff: Int
-        val dstOff: Int
-        val alen: Int
-        when (ver) {
-            4 -> {
-                hdr = (p[0].toInt() and 0xF) * 4
-                proto = p[9].toInt() and 0xFF
-                val fragOff = ((p[6].toInt() and 0x1F) shl 8) or (p[7].toInt() and 0xFF)
-                if (fragOff != 0) return false
-                srcOff = 12; dstOff = 16; alen = 4
-            }
-            6 -> {
-                if (n < 44) return false
-                hdr = 40
-                proto = p[6].toInt() and 0xFF
-                srcOff = 8; dstOff = 24; alen = 16
-            }
-            else -> return false
-        }
-        if (proto != OsConstants.IPPROTO_TCP && proto != OsConstants.IPPROTO_UDP) return false
-        if (n < hdr + 4) return false
-
-        val sport = ((p[hdr].toInt() and 0xFF) shl 8) or (p[hdr + 1].toInt() and 0xFF)
-        val key = (proto shl 24) or (ver shl 16) or sport
-
-        val cached = cache[key]
-        if (cached != null && cached.expiry > now) {
-            if (cached.blocked) cached.expiry = now + KNOWN_TTL
-            return cached.blocked
-        }
-
-        val dport = ((p[hdr + 2].toInt() and 0xFF) shl 8) or (p[hdr + 3].toInt() and 0xFF)
-        val uid = lookupUid(proto, p, srcOff, dstOff, alen, sport, dport)
-        val blocked = when {
-            uid < 0 -> false
-            // Mode "hanya yang dicentang": blokir semua aplikasi biasa (uid >= 10000)
-            // yang tidak dicentang. Layanan sistem (uid kecil, termasuk DNS) tetap lolos.
-            allowOnly -> uid >= FIRST_APP_UID && uid !in blockedUids
-            else -> uid in blockedUids
-        }
-        if (cache.size > 8192) cache.entries.removeAll { it.value.expiry <= now }
-        cache[key] = Verdict(blocked, now + if (uid < 0) UNKNOWN_TTL else KNOWN_TTL)
-        return blocked
+    private fun stopFirewall() {
+        try { tun?.close() } catch (_: Exception) {}
+        tun = null
+        worker?.interrupt()
+        worker = null
     }
 
-    private fun lookupUid(
-        proto: Int, p: ByteArray, srcOff: Int, dstOff: Int, alen: Int, sport: Int, dport: Int
-    ): Int {
-        return try {
-            val src = InetAddress.getByAddress(p.copyOfRange(srcOff, srcOff + alen))
-            val dst = InetAddress.getByAddress(p.copyOfRange(dstOff, dstOff + alen))
-            val local = InetSocketAddress(src, sport)
-            var uid = cm.getConnectionOwnerUid(proto, local, InetSocketAddress(dst, dport))
-            if (uid < 0 && proto == OsConstants.IPPROTO_UDP) {
-                // UDP tanpa connect(): coba dengan tujuan wildcard
-                val any = if (alen == 4) InetAddress.getByAddress(ByteArray(4)) else InetAddress.getByAddress(ByteArray(16))
-                uid = cm.getConnectionOwnerUid(proto, local, InetSocketAddress(any, 0))
-            }
-            uid
-        } catch (e: Exception) {
-            -1
+    private fun startForegroundCompat() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, getString(R.string.firewall_title), NotificationManager.IMPORTANCE_LOW)
+            )
         }
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            Notification.Builder(this, CHANNEL_ID) else @Suppress("DEPRECATION") Notification.Builder(this)
+        val notification = builder
+            .setSmallIcon(R.drawable.ic_stat_name)
+            .setContentTitle(getString(R.string.firewall_title))
+            .setContentText(getString(R.string.firewall_notification_text))
+            .setOngoing(true)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+    }
+
+    /** Dipanggil Android saat VPN lain (misalnya v2ray) mengambil alih. */
+    override fun onRevoke() {
+        setEnabled(this, false)
+        stopFirewall()
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        stopFirewall()
+        super.onDestroy()
     }
 
     companion object {
-        private const val FIRST_APP_UID = 10000
-        private const val KNOWN_TTL = 120_000L
-        private const val UNKNOWN_TTL = 2_000L
+        const val ACTION_STOP = "com.v2ray.ang.firewall.STOP"
+        private const val CHANNEL_ID = "firewall"
+        private const val NOTIF_ID = 7002
+
+        fun isEnabled(c: Context) = FirewallPrefs.standalone()
+
+        fun setEnabled(c: Context, on: Boolean) = FirewallPrefs.setStandalone(on)
+
+        fun start(c: Context) {
+            setEnabled(c, true)
+            c.startForegroundService(Intent(c, FirewallService::class.java))
+        }
+
+        fun stop(c: Context) {
+            setEnabled(c, false)
+            c.startService(Intent(c, FirewallService::class.java).setAction(ACTION_STOP))
+        }
     }
 }
