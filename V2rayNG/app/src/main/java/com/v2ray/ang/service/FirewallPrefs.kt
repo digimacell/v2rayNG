@@ -15,6 +15,7 @@ object FirewallPrefs {
     private const val KEY_STANDALONE = "pref_fw_standalone"
     private const val KEY_WITH_V2RAY = "pref_fw_with_v2ray"
     private const val KEY_ALLOW_ONLY = "pref_fw_allow_only"
+    private const val KEY_STABILITY = "pref_stability_mode"
 
     fun blocked(): Set<String> =
         MmkvManager.decodeSettingsStringSet(KEY_BLOCKED)?.toSet() ?: emptySet()
@@ -39,5 +40,14 @@ object FirewallPrefs {
     fun allowOnly(): Boolean = MmkvManager.decodeSettingsBool(KEY_ALLOW_ONLY)
     fun setAllowOnly(on: Boolean) {
         MmkvManager.encodeSettings(KEY_ALLOW_ONLY, on)
+    }
+
+    /**
+     * Mode stabilitas (bawaan: nyala): keepalive WebSocket, pemutusan cepat koneksi mati, dan
+     * pengawas yang menyambung ulang core otomatis. Dibaca saat v2ray dinyalakan.
+     */
+    fun stability(): Boolean = MmkvManager.decodeSettingsBool(KEY_STABILITY, true)
+    fun setStability(on: Boolean) {
+        MmkvManager.encodeSettings(KEY_STABILITY, on)
     }
 }
