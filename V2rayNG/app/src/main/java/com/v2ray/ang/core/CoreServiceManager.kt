@@ -9,6 +9,7 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
@@ -27,6 +28,7 @@ import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.service.DialerNativeService
 import com.v2ray.ang.service.DialerWebviewService
+import com.v2ray.ang.service.FirewallPrefs
 import com.v2ray.ang.service.NetworkMonitor
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -56,6 +58,17 @@ object CoreServiceManager {
 
     @Volatile
     private var isReloading = false
+
+    /** true selama core dijalankan oleh layanan dan belum diminta berhenti. */
+    @Volatile
+    private var loopActive = false
+
+    /** Memeriksa jalur proxy secara berkala dan menyambung ulang core bila mati. */
+    private val watchdog = ConnectionWatchdog(
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        probe = { probeConnection() },
+        recover = { recoverCore() },
+    )
 
     /** Tun descriptor the core was started with, null in the proxy only and root run modes. */
     private var currentVpnInterface: ParcelFileDescriptor? = null
@@ -123,6 +136,8 @@ object CoreServiceManager {
         currentVpnInterface = vpnInterface
         launchCore(service, vpnInterface)
         startNetworkMonitor(service)
+        loopActive = true
+        startWatchdog(service)
     }
 
     @Throws(Exception::class)
@@ -153,7 +168,7 @@ object CoreServiceManager {
         if (dialerAddr.isNotNullEmpty()) {
             CoreNativeManager.reconcileBrowserDialer(dialerAddr)
         }
-        coreController.startLoop(result.content, tunFd)
+        coreController.startLoop(StabilityTweaks.apply(result.content), tunFd)
 
         if (!isRunning()) {
             error("Core failed to start")
@@ -190,6 +205,8 @@ object CoreServiceManager {
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        loopActive = false
+        watchdog.stop()
         connectionTestScope.coroutineContext.cancelChildren()
         val service = getService() ?: return false
 
@@ -273,6 +290,55 @@ object CoreServiceManager {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to reload core: $message", e)
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
+            false
+        } finally {
+            isReloading = false
+        }
+    }
+
+
+    /**
+     * Menyalakan pengawas koneksi bila mode stabilitas aktif (bawaan: aktif).
+     */
+    private fun startWatchdog(service: Service) {
+        if (!FirewallPrefs.stability()) return
+        val power = service.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        watchdog.start(screenOn = power?.isInteractive ?: true)
+    }
+
+    /**
+     * Satu pemeriksaan: mengambil URL uji lewat core (jalur proxy yang sama dengan tombol tes).
+     * Sehat bila salah satu dari dua URL uji berhasil.
+     */
+    private fun probeConnection(): Boolean {
+        if (!loopActive || isReloading) return true
+        if (!isRunning()) return false
+        for (second in booleanArrayOf(false, true)) {
+            try {
+                if (coreController.measureDelay(SettingsManager.getDelayTestUrl(second)) >= 0) return true
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "StartCore-Manager: Watchdog probe failed: ${e.message}")
+            }
+        }
+        return false
+    }
+
+    /**
+     * Memulihkan core yang tidak merespons. Config disusun ulang, jadi alamat server dicari lagi
+     * dari awal. Kalau core ternyata sudah mati (misalnya reload sebelumnya gagal) tetapi layanan
+     * VPN masih hidup, core dijalankan lagi.
+     */
+    private fun recoverCore(): Boolean {
+        if (!loopActive) return false
+        if (isRunning()) return reloadCore()
+        val service = getService() ?: return false
+        if (isReloading) return false
+        return try {
+            isReloading = true
+            launchCore(service, currentVpnInterface, isReload = true)
+            true
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to restart core: ${e.message}", e)
             false
         } finally {
             isReloading = false
@@ -508,11 +574,13 @@ object CoreServiceManager {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Screen off")
+                    watchdog.onScreenChanged(false)
                     NotificationManager.stopSpeedNotification()
                 }
 
                 Intent.ACTION_SCREEN_ON -> {
                     LogUtil.i(AppConfig.TAG, "StartCore-Manager: Screen on")
+                    watchdog.onScreenChanged(true)
                     NotificationManager.startSpeedNotification()
                 }
             }
