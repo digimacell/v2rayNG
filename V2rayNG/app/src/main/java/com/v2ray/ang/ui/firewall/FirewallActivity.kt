@@ -7,6 +7,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -98,6 +100,7 @@ class FirewallActivity : BaseComponentActivity() {
         var loading by remember { mutableStateOf(true) }
         var blocked by remember { mutableStateOf(FirewallPrefs.blocked()) }
         var withV2ray by remember { mutableStateOf(FirewallPrefs.withV2ray()) }
+        var stability by remember { mutableStateOf(FirewallPrefs.stability()) }
         var allowOnly by remember { mutableStateOf(FirewallPrefs.allowOnly()) }
         var showSearch by rememberSaveable { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
@@ -148,62 +151,86 @@ class FirewallActivity : BaseComponentActivity() {
             }
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
-                Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                stringResource(R.string.firewall_switch),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Switch(checked = enabled, onCheckedChange = { toggle(it) })
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                stringResource(R.string.firewall_with_v2ray),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Switch(checked = withV2ray, onCheckedChange = {
-                                withV2ray = it
-                                FirewallPrefs.setWithV2ray(it)
-                            })
-                        }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                stringResource(R.string.firewall_allow_only),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Switch(checked = allowOnly, onCheckedChange = {
-                                allowOnly = it
-                                FirewallPrefs.setAllowOnly(it)
-                                // Mode mandiri: terapkan ulang. Mode v2ray: filter membaca sendiri.
-                                if (enabled) FirewallService.start(this@FirewallActivity)
-                            })
-                        }
-                        Text(
-                            stringResource(R.string.firewall_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                AppDivider()
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize().verticalScrollbar(listState),
                     contentPadding = NavigationBarsBottomPadding()
                 ) {
+                    item(key = "header") {
+                        Column {
+                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    stringResource(R.string.firewall_switch),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Switch(checked = enabled, onCheckedChange = { toggle(it) })
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    stringResource(R.string.firewall_with_v2ray),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Switch(checked = withV2ray, onCheckedChange = {
+                                    withV2ray = it
+                                    FirewallPrefs.setWithV2ray(it)
+                                })
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    stringResource(R.string.firewall_allow_only),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Switch(checked = allowOnly, onCheckedChange = {
+                                    allowOnly = it
+                                    FirewallPrefs.setAllowOnly(it)
+                                    // Mode mandiri: terapkan ulang. Mode v2ray: filter membaca sendiri.
+                                    if (enabled) FirewallService.start(this@FirewallActivity)
+                                })
+                            }
+                            Text(
+                                stringResource(R.string.firewall_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    stringResource(R.string.stability_mode),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Switch(checked = stability, onCheckedChange = {
+                                    stability = it
+                                    FirewallPrefs.setStability(it)
+                                })
+                            }
+                            Text(
+                                stringResource(R.string.stability_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                            AppDivider()
+                        }
+                    }
                     items(items = shown, key = { it.packageName }) { app ->
                         AppListItem(
                             appName = app.appName,
