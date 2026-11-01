@@ -166,9 +166,11 @@
     <string name="msg_downloading_content">Downloading content</string>
     <string name="menu_item_export_proxy_app">Export to Clipboard</string>
     <string name="menu_item_import_proxy_app">Import from Clipboard</string>
-        <string name="firewall_title">Internet firewall</string>
+        <string name="firewall_title">Firewall &amp; stability</string>
     <string name="firewall_switch">Block checked apps (standalone, without v2ray)</string>
     <string name="firewall_with_v2ray">Also block while v2ray is running</string>
+    <string name="stability_mode">Stability mode (auto reconnect)</string>
+<string name="stability_hint">Keeps WebSocket/CDN connections (for example CloudFront) alive, drops dead connections quickly, and restarts the core automatically when the connection stops responding. Uses roughly 10 KB per check, every 2 minutes while the screen is on. Takes effect the next time v2ray is started.</string>
 <string name="firewall_allow_only">Only checked apps may go online</string>
     <string name="firewall_hint">Normal mode: checked = internet BLOCKED for that app. "Only checked apps" mode: checked = the ONLY apps allowed online, all others are blocked. The standalone mode uses its own VPN and disconnects v2ray (Android allows only one VPN). "Also block while v2ray is running" works on Android 10+ and takes effect the next time v2ray is started; apps excluded from the v2ray VPN by per-app settings cannot be blocked.</string>
     <string name="firewall_pick_first">Check at least one app to block first</string>
