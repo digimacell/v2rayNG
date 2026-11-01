@@ -104,6 +104,7 @@
     <string name="server_lab_local_address">Yerli ünvan (istəyə bağlı IPv4/IPv6, vergüllə ayrılmış)</string>
     <string name="server_lab_local_mtu">MTU (istəyə bağlı, standart 1420)</string>
     <string name="server_lab_remote_dns">remoteDNS (istəyə bağlı, vergüllə ayrılmış IPv4/IPv6)</string>
+    <string name="server_lab_remote_dns_hint">Boşdursa, standart olaraq %1$s istifadə olunur. IPv6 ünvanları yalnız IPv6 aktiv olduqda istifadə edilir.</string>
     <string name="server_lab_kcp_mtu">mKCP MTU (istəyə bağlı, standart 1350)</string>
     <string name="server_lab_kcp_tti">mKCP TTI (istəyə bağlı, standart 50 ms)</string>
     <string name="toast_success">Uğurlu</string>
@@ -212,7 +213,7 @@
     <string name="summary_pref_route_only_enabled">Təyin edilmiş domen adını yalnız marşrutlaşdırma üçün istifadə edin və hədəf ünvanını IP ünvanı olaraq saxlayın.</string>
 
     <string name="title_pref_local_dns_enabled">Yerli DNS-i aktivləşdir</string>
-    <string name="summary_pref_local_dns_enabled">DNS nüvənin DNS modulu tərəfindən emal olunur LAN və ölkə daxili ünvanları yan keçmək lazımdırsa tövsiyə olunur)</string>
+    <string name="summary_pref_local_dns_enabled">DNS nüvənin DNS modulu tərəfindən emal olunur (LAN və ölkə daxili ünvanları yan keçmək lazımdırsa tövsiyə olunur)</string>
 
     <string name="title_pref_fake_dns_enabled">FakeDNS aktivləşdir</string>
     <string name="summary_pref_fake_dns_enabled">FakeDNS domen sorğuları üçün süni IP ünvanları qaytarır (daha sürətlidir, lakin bəzi tətbiqlərlə işləməyə bilər).</string>
@@ -357,7 +358,6 @@
     <string name="title_export_config_count">%d konfiqurasiya ixrac edilsin</string>
     <plurals name="title_update_config_count">
         <item quantity="one">%1$d konfiqurasiya yeniləndi</item>
-
         <item quantity="other">%1$d konfiqurasiya yeniləndi</item>
     </plurals>
     <plurals name="title_update_asset_count">
@@ -561,5 +561,9 @@
     <string name="tasker_blurb_stop">%1$s Dayandır</string>
     <string name="connection_test_empty_message">ətraflı məlumat yoxdur</string>
     <string name="value_unknown">naməlum</string>
+    <string name="sub_info_open_support">Dəstək linkini aç</string>
+    <string name="sub_info_open_page">Abunəlik səhifəsini aç</string>
+    <string name="sub_info_traffic" translatable="false">%1$s / %2$s</string>
+    <string name="sub_info_unlimited">Limitsiz</string>
 
 </resources>
