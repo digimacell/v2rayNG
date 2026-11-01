@@ -36,6 +36,12 @@ class FirewallService : VpnService() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // Android menghidupkan ulang service ini dengan intent null. Kalau pengguna sudah
+        // mematikan firewall, jangan nyalakan lagi.
+        if (intent == null && !FirewallPrefs.standalone()) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForegroundCompat()
         if (!startFirewall()) {
             setEnabled(this, false)
