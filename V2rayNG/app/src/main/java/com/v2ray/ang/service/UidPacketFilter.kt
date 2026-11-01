@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructPollfd
@@ -86,31 +87,43 @@ class UidPacketFilter(
         val buf = ByteArray(65536)
         val pfd = StructPollfd().apply { fd = tun.fileDescriptor; events = OsConstants.POLLIN.toShort() }
         val pfds = arrayOf(pfd)
-        try {
-            while (running) {
+        while (running) {
+            try {
                 // poll dengan timeout supaya thread ini pasti berhenti saat stop(),
                 // dan tidak "mencuri" paket dari filter berikutnya.
                 if (Os.poll(pfds, 500) <= 0) continue
                 val n = Os.read(tun.fileDescriptor, buf, 0, buf.size)
                 if (n <= 0) continue
                 if (!isBlocked(buf, n)) Os.write(a, buf, 0, n)
+            } catch (e: ErrnoException) {
+                // Sinyal atau antrean penuh sesaat: coba lagi. Selain itu (misalnya fd sudah
+                // ditutup) hentikan thread.
+                if (e.errno == OsConstants.EINTR || e.errno == OsConstants.EAGAIN) continue
+                if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter up: ${e.message}")
+                break
+            } catch (e: Exception) {
+                if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter up: ${e.message}")
+                break
             }
-        } catch (e: Exception) {
-            if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter up: ${e.message}")
         }
     }
 
     /** hev -> TUN (tanpa filter) */
     private fun pumpDown() {
         val buf = ByteArray(65536)
-        try {
-            while (running) {
+        while (running) {
+            try {
                 val n = Os.read(a, buf, 0, buf.size)
                 if (n <= 0) { if (!running) break else continue }
                 Os.write(tun.fileDescriptor, buf, 0, n)
+            } catch (e: ErrnoException) {
+                if (e.errno == OsConstants.EINTR || e.errno == OsConstants.EAGAIN) continue
+                if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter down: ${e.message}")
+                break
+            } catch (e: Exception) {
+                if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter down: ${e.message}")
+                break
             }
-        } catch (e: Exception) {
-            if (running) LogUtil.e(AppConfig.TAG, "UidPacketFilter down: ${e.message}")
         }
     }
 
