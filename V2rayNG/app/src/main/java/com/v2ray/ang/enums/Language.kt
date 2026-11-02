@@ -14,7 +14,8 @@ enum class Language(val code: String, val languageTag: String) {
     ARABIC("ar", "ar"),
     AZERBAIJANI("az", "az"),
     BANGLA("bn", "bn"),
-    BAKHTIARI("bqi-rIR", "bqi-IR");
+    BAKHTIARI("bqi-rIR", "bqi-IR"),
+    INDONESIAN("in", "id");
 
     val locale: Locale?
         get() = languageTag.takeIf { it.isNotEmpty() }?.let(Locale::forLanguageTag)
@@ -52,6 +53,7 @@ enum class Language(val code: String, val languageTag: String) {
                 "az" -> AZERBAIJANI
                 "bn" -> BANGLA
                 "bqi" -> BAKHTIARI
+                "in", "id" -> INDONESIAN
                 else -> AUTO
             }
         }
